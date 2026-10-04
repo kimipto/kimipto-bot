@@ -1,70 +1,136 @@
-import os
 import time
+import logging
 import requests
-import json
-import pandas as pd
-import ccxt
-from groq import Groq
+import os
+from datetime import datetime
+from settings_manager import load_user_settings
 
-# خواندن کلیدها از محیط امن گیت‌هاب
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
 
-SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+MAIN_ASSETS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+MEME_ASSETS = ["PEPEUSDT", "DOGEUSDT", "SHIBUSDT"]
 
-groq_client = Groq(api_key=GROQ_API_KEY)
-exchange = ccxt.kucoin({'enableRateLimit': True})
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-def send_alert(msg):
+def send_telegram_message(text, reply_markup=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+        response = requests.post(url, json=payload)
+        return response.json()
     except Exception as e:
-        print(f"Telegram Err: {e}")
+        logger.error(f"خطا در ارسال پیام تلگرام: {e}")
+        return None
 
-def get_data(symbol):
+def fetch_market_data(symbol):
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=50)
-        df = pd.DataFrame(ohlcv, columns=['t', 'o', 'h', 'l', 'c', 'v'])
-        delta = df['c'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rsi = 100 - (100 / (1 + (gain / loss)))
-        return True, df['c'].iloc[-1], round(rsi.iloc[-1], 2)
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=30m&limit=50"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if isinstance(data, list) and len(data) > 0:
+            last_candle = data[-1]
+            last_candle_time = datetime.fromtimestamp(last_candle[0] / 1000.0)
+            logger.info(f"داده‌های {symbol} دریافت شد. زمان آخرین کندل: {last_candle_time}")
+            closes = [float(candle[4]) for candle in data]
+            return closes, last_candle_time
+        return None, None
     except Exception as e:
-        print(f"Data Err {symbol}: {e}")
-        return False, None, None
+        logger.error(f"خطا در دریافت داده برای {symbol}: {e}")
+        return None, None
 
-def analyze(symbol, price, rsi):
-    prompt = f"Analyze {symbol}: Price ${price}, RSI {rsi}. If RSI<35 BUY, if RSI>65 SELL, else HOLD. Return JSON: {{\"signal\": \"BUY|SELL|HOLD\", \"reasoning\": \"1 sentence\"}}"
-    try:
-        res = groq_client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
-        data = json.loads(res.choices[0].message.content)
-        return data.get("signal", "HOLD"), data.get("reasoning", "")
-    except:
-        return ("BUY" if rsi < 35 else ("SELL" if rsi > 65 else "HOLD")), f"RSI: {rsi}"
+def calculate_rsi(closes, period=14):
+    if len(closes) < period + 1:
+        return 50.0
+    gains, losses = 0.0, 0.0
+    for i in range(1, period + 1):
+        change = closes[-i] - closes[-i-1]
+        if change > 0:
+            gains += change
+        else:
+            losses -= change
+    avg_gain = gains / period
+    avg_loss = losses / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return round(rsi, 2)
 
-def check_risk(symbol, price, rsi, signal, reasoning):
-    if signal == "HOLD": return False, "HOLD Signal"
-    prompt = f"Risk check {symbol}: Price ${price}, RSI {rsi}, Signal {signal}. Approve? Return JSON: {{\"approved\": true|false, \"risk_comment\": \"1 sentence\"}}"
-    try:
-        res = groq_client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
-        data = json.loads(res.choices[0].message.content)
-        return data.get("approved", False), data.get("risk_comment", "")
-    except:
-        return True, "Approved (fallback)"
+def run_multi_agent_system():
+    settings = load_user_settings()
+    auto_limit = settings.get("auto_execution_limit", 150.0)
+    rsi_low = settings.get("rsi_oversold", 30)
+    rsi_high = settings.get("rsi_overbought", 70)
+    
+    logger.info(f"اعمال تنظیمات -> سقف خودکار: ${auto_limit} | RSI خرید: {rsi_low} | RSI فروش: {rsi_high}")
+    
+    all_assets = MAIN_ASSETS + MEME_ASSETS
+    signals_found = 0
+    
+    for symbol in all_assets:
+        closes, last_time = fetch_market_data(symbol)
+        if not closes:
+            continue
+        
+        current_price = closes[-1]
+        rsi = calculate_rsi(closes)
+        
+        signal_type = None
+        if rsi <= rsi_low:
+            signal_type = "خرید (LONG)"
+        elif rsi >= rsi_high:
+            signal_type = "فروش (SHORT)"
+            
+        if signal_type:
+            signals_found += 1
+            proposed_amount = 100.0
+            
+            if proposed_amount <= auto_limit:
+                msg = (
+                    f"🤖 **معامله خودکار قائم‌مقام (Paper Trading)**\n"
+                    f"▫️ ارز: `{symbol}`\n"
+                    f"▫️ سیگنال: **{signal_type}**\n"
+                    f"▫️️ قیمت: `{current_price}` | RSI: `{rsi}`\n"
+                    f"▫️ مبلغ تخصیص‌یافته: `${proposed_amount}` (زیر سقف انتخابی شما: ${auto_limit})"
+                )
+                send_telegram_message(msg)
+                logger.info(f"معامله خودکار برای {symbol} انجام شد.")
+            else:
+                keyboard = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "✅ تایید و صدور مجوز", "callback_data": f"approve_{symbol}"},
+                            {"text": "❌ رد کردن", "callback_data": f"reject_{symbol}"}
+                        ]
+                    ]
+                }
+                msg = (
+                    f"⚠️ **درخواست تایید معامله (فراتر از سقف شما: ${auto_limit})**\n"
+                    f"▫️️ ارز: `{symbol}` | سیگنال: **{signal_type}**\n"
+                    f"▫️ قیمت: `{current_price}` | RSI: `{rsi}`\n"
+                    f"▫️️ مبلغ پیشنهادی: `${proposed_amount}`"
+                )
+                send_telegram_message(msg, reply_markup=keyboard)
+        else:
+            logger.info(f"شرایط ورود برای {symbol} برقرار نیست (RSI در محدوده خنثی: {rsi}).")
 
-def run_cycle():
-    print("\n--- Scanning Market ---")
-    for s in SYMBOLS:
-        ok, price, rsi = get_data(s)
-        if not ok: continue
-        sig, reason = analyze(s, price, rsi)
-        app, risk = check_risk(s, price, rsi, sig, reason)
-        print(f"[{s}] Price: ${price} | RSI: {rsi} | Signal: {sig} | Approved: {app}")
-        if app:
-            send_alert(f"🚨 *Kimipto Alert*\n\n🪙 `{s}`\n💵 `${price}`\n📊 RSI: `{rsi}`\n📈 Signal: `{sig}`\n🧠 {reason}\n🛡 {risk}")
+    heartbeat_msg = (
+        f"💓 **گزارش سلامت سیستم (Heartbeat)**\n"
+        f"▫️ زمان بررسی: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`\n"
+        f"▫️ سقف بودجه خودکار شما: `${auto_limit}`\n"
+        f"▫️ محدوده‌های RSI: خرید < `{rsi_low}` | فروش > `{rsi_high}`\n"
+        f"▫️ سیگنال‌های این چرخه: `{signals_found}`\n"
+        f"▫️ وضعیت ربات: `فعال و پایدار (Paper Trading)`"
+    )
+    send_telegram_message(heartbeat_msg)
 
 if __name__ == "__main__":
-    print("Kimipto AI Cloud Execution Started...")
-    run_cycle()
+    run_multi_agent_system()
