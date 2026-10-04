@@ -1,4 +1,4 @@
-# kimipto-botimport json
+import json
 import os
 
 SETTINGS_FILE = "user_settings.json"
