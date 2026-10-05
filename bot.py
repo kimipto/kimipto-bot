@@ -1,4 +1,4 @@
-def run_multi_agent_system(): 
+def run_multi_agent_system():
     settings = load_user_settings()
     auto_limit = settings.get("auto_execution_limit", 150.0)
     rsi_low = settings.get("rsi_oversold", 35)
