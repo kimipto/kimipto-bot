@@ -10,7 +10,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def send_telegram_message(message: str) -> bool:
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.error("خطا: توکن یا چت‌آیدی تلگرام در متغیرهای محیطی یافت نشد.")
+        print(f"خطا: توکن یا چت‌آیدی تلگرام در متغیرهای محیطی یافت نشد! Token: {bool(TELEGRAM_TOKEN)}, ChatID: {bool(TELEGRAM_CHAT_ID)}")
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -22,14 +22,17 @@ def send_telegram_message(message: str) -> bool:
     
     try:
         response = requests.post(url, json=payload, timeout=15)
+        print(f"Telegram API Status Code: {response.status_code}")
+        print(f"Telegram API Response: {response.text}")
+        
         if response.status_code == 200:
-            logger.info("پیام تلگرام با موفقیت ارسال شد.")
+            print("پیام تلگرام با موفقیت ارسال شد.")
             return True
         else:
-            logger.error(f"خطای تلگرام: {response.text}")
+            print(f"خطای تلگرام: {response.text}")
             return False
     except Exception as e:
-        logger.error(f"خطای شبکه در ارتباط با تلگرام: {e}")
+        print(f"خطای شبکه در ارتباط با تلگرام: {e}")
         return False
 
 def run_multi_agent_system():
