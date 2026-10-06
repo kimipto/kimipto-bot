@@ -5,14 +5,18 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# خواندن مستقیم متغیرهای محیطی با پیش‌فرض None برای بررسی دقیق
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def send_telegram_message(message: str) -> bool:
+    # چاپ وضعیت برای بررسی در لاگ گیت‌هاب
+    print(f"Checking environment variables -> Token: {bool(TELEGRAM_TOKEN)}, ChatID: {bool(TELEGRAM_CHAT_ID)}")
+    
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print(f"خطا: توکن یا چت‌آیدی تلگرام در متغیرهای محیطی یافت نشد! Token: {bool(TELEGRAM_TOKEN)}, ChatID: {bool(TELEGRAM_CHAT_ID)}")
+        print("خطا: توکن یا چت‌آیدی تلگرام در متغیرهای محیطی یافت نشد!")
         return False
-
+        
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -36,13 +40,13 @@ def send_telegram_message(message: str) -> bool:
         return False
 
 def run_multi_agent_system():
-    logger.info("اجرای سیستم چندعامله ربات آغاز شد.")
+    logger.info("اجرای سیستم چندعامله بات آغاز شد.")
     
     heartbeat_msg = (
-        "🟢 *گزارش سلامت ربات (Heartbeat)*\n\n"
-        "▫️ وضعیت اکشن گیت‌هاب: موفق (Success)\n"
-        "▫️ بررسی بازار و پایش: انجام شد\n"
-        "▫️ سیستم در وضعیت کاملاً فعال قرار دارد."
+        "🟢 *گزارش سلامت بات (Heartbeat)*\n"
+        "✅ وضعیت اکشن گیت‌هاب: موفق\n"
+        "⚙️ بررسی سیستم و پایش خودکار: فعال\n"
+        "💻 سیستم در وضعیت کاملاً عملیاتی قرار دارد."
     )
     
     send_telegram_message(heartbeat_msg)
